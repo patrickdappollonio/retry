@@ -74,10 +74,11 @@ func (r *Retry) Do(fn Operation) error {
 	// Create a goroutine to handle the operation loop
 	go func(callback Operation, ch chan error) {
 		for {
-			switch reason, err := callback(); reason {
+			reason, err := callback()
+			switch reason {
 			case Stop:
 				ch <- err
-				break
+				return
 			case Again:
 				time.Sleep(r.sleep)
 				continue
@@ -102,7 +103,5 @@ func (r *Retry) Do(fn Operation) error {
 	}(close)
 
 	// Retrieve the value we will return
-	err := <-close
-
-	return err
+	return <-close
 }
