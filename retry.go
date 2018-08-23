@@ -12,6 +12,11 @@ import (
 // when the OS sends a termination signal
 var ErrOSRequestedCancellation = errors.New("received OS signal to stop operation")
 
+// ErrRetriesExhausted gets returned from the Do() operation when
+// the maximum amount of retries gets exhausted and no more retries
+// are attempted
+var ErrRetriesExhausted = errors.New("exhausted the number of retries")
+
 // Reason is a custom type to pass to
 // retry in order to either try again or stop trying
 type Reason int
@@ -38,7 +43,13 @@ type Config func(*Retry)
 // times until that function thinks it's safe to stop. The flow is handled by returning
 // a reason, either Retry or Stop.
 type Retry struct {
-	sleep time.Duration
+	sleep       time.Duration
+	maxattempts int
+}
+
+// MaxAttempts return the currently set number of attempts
+func (r *Retry) MaxAttempts() int {
+	return r.maxattempts
 }
 
 // New creates a new retry operation with a default
@@ -64,6 +75,15 @@ func Sleep(d time.Duration) Config {
 	}
 }
 
+// MaxAttempts is a retry configuration you can pass to the New()
+// function to change the default amount of retries the package
+// can do. By default is unlimited.
+func MaxAttempts(attempts int) Config {
+	return func(r *Retry) {
+		r.maxattempts = attempts
+	}
+}
+
 // Do retries a RetryOperation until either retry.Stop or retry.Again
 // gets returned. Stop will continue the parent flow and Again will execute
 // the RetryOperation again.
@@ -73,14 +93,28 @@ func (r *Retry) Do(fn Operation) error {
 
 	// Create a goroutine to handle the operation loop
 	go func(callback Operation, ch chan error) {
+		// Start with a single attempt
+		attempts := 1
 		for {
+			// If the attempts were set to something other than zero
+			// and we hit the maximum number of attempts, then exhaust
+			// and return
+			if r.maxattempts != 0 && attempts > r.maxattempts {
+				ch <- ErrRetriesExhausted
+				return
+			}
+
+			// Call the user-given function
 			reason, err := callback()
+
+			// Check the returned values
 			switch reason {
 			case Stop:
 				ch <- err
 				return
 			case Again:
 				time.Sleep(r.sleep)
+				attempts++
 				continue
 			}
 		}
